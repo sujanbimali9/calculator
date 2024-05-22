@@ -9,3 +9,8 @@ final class InputError extends CalculateState{
 
   InputError({required this.error});
 }
+final class CalculateSuccess extends CalculateState{
+  final String result;
+
+  CalculateSuccess({required this.result});
+}

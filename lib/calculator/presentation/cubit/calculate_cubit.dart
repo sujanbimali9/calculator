@@ -1,6 +1,9 @@
+import 'dart:developer';
+
 import 'package:bloc/bloc.dart';
 import 'package:calculator/utils/enum/enum.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/widgets.dart';
 import 'package:math_expressions/math_expressions.dart';
 
 part 'calculate_state.dart';
@@ -22,9 +25,14 @@ class CalculateCubit extends Cubit<CalculateState> {
         break;
       case CalculatorEvent.clear:
         _controller.clear();
+        emit(CalculateInitial());
         break;
       case CalculatorEvent.equals:
-        _calculate();
+        try {
+          _calculate();
+        } catch (e) {
+          emit(InputError(error: 'Invalid input $e'));
+        }
         break;
       case CalculatorEvent.decimal:
         _handleDecimal();
@@ -36,18 +44,60 @@ class CalculateCubit extends Cubit<CalculateState> {
         _handleCloseParenthesis();
         break;
     }
+    if (RegExp(r'[+\-−*/÷×%(]').hasMatch(_controller.text)) {
+      try {
+        _calculate(expression: _controller.text);
+      } catch (e) {
+        emit(CalculateInitial());
+      }
+    } else {
+      emit(CalculateInitial());
+    }
   }
 
   void clearLast() {
     if (_controller.text.isEmpty) return;
+    final selection = _controller.selection;
     final text = _controller.text.split('');
-    text.removeLast();
-    _controller.text = text.join();
+    if (!selection.isValid) {
+      log('remove last');
+
+      text.removeLast();
+      _controller.text = text.join();
+    } else if (selection.start == selection.end) {
+      log('cursor');
+      if (selection.start != 0) {
+        text.removeAt(selection.start - 1);
+        _controller.value = _controller.value.copyWith(
+            text: text.join(),
+            selection: TextSelection(
+                baseOffset: selection.start - 1,
+                extentOffset: selection.start - 1));
+      }
+    } else {
+      log('range');
+      text.removeRange(selection.start, selection.end);
+      _controller.value = _controller.value.copyWith(
+          text: text.join(),
+          selection: TextSelection(
+              baseOffset: selection.start, extentOffset: selection.start));
+    }
+    if (RegExp(r'[+\-−*/÷×%(]').hasMatch(_controller.text)) {
+      try {
+        _calculate(expression: _controller.text);
+      } catch (e) {
+        emit(CalculateInitial());
+      }
+    } else {
+      emit(CalculateInitial());
+    }
+    return;
   }
 
-  void _calculate() {
-    if (_controller.text.isEmpty) return;
-    var currentText = _controller.text;
+  void _calculate({String? expression}) {
+    var currentText = expression ?? _controller.text;
+
+    if (currentText.isEmpty) return;
     final openBracket =
         currentText.split('').where((element) => element == '(').length;
 
@@ -61,46 +111,130 @@ class CalculateCubit extends Cubit<CalculateState> {
     currentText = currentText.replaceAllMapped(RegExp(r'\)(\d)'), (match) {
       return ')*${match.group(1)}';
     });
-    
+
     try {
       final equation = currentText
           .replaceAll('×', '*')
           .replaceAll('÷', '/')
           .replaceAll('−', '-');
       Expression exp = Parser().parse(equation);
-      double res = exp.simplify().evaluate(EvaluationType.REAL, ContextModel());
+      String result = exp
+          .simplify()
+          .evaluate(EvaluationType.REAL, ContextModel())
+          .toString();
 
-      res = res.roundToDouble();
-
-      var result = res.toString();
       if (result.endsWith('.0')) {
         result = result.substring(0, result.length - 2);
       }
-      _controller.text = result;
+      expression == null
+          ? emit(CalculateInitial())
+          : emit(CalculateSuccess(result: result));
+      if (expression == null) _controller.text = result;
+      return;
     } catch (e) {
-      emit(InputError(error: 'Invalid input $e'));
+      rethrow;
     }
   }
 
   void _handleOperator(String operator) {
-    if (_controller.text.isEmpty) return;
-    String lastChar = _controller.text[_controller.text.length - 1];
+    final selection = _controller.selection;
+    var operaorReg = RegExp(r'[+\-−*/÷×%]');
 
-    if ((lastChar == '(' && RegExp(r'[\*/÷×%]').hasMatch(operator))) return;
+    if (_controller.text.isEmpty ||
+        (selection.start == 0 && !RegExp(r'[+\-−]').hasMatch(operator)) ||
+        _controller.text.length == selection.end - 1) return;
 
-    if (_controller.text.length > 1 &&
-        (_controller.text[_controller.text.length - 2] == '(' &&
-            RegExp(r'[\*/÷×%]').hasMatch(operator))) return;
-    if (lastChar == '.') {
-      _controller.text += '0';
-    }
+    if (!_controller.selection.isValid ||
+        selection.start == _controller.text.length) {
+      String lastChar = _controller.text[_controller.text.length - 1];
 
-    if (RegExp(r'[+\-−*/÷×%]').hasMatch(lastChar)) {
-      _controller.text =
-          _controller.text.substring(0, _controller.text.length - 1) + operator;
+      if ((lastChar == '(' && !RegExp(r'[+\-−]').hasMatch(operator))) return;
+
+      if (_controller.text.length > 1 &&
+          (_controller.text[_controller.text.length - 2] == '(' &&operaorReg.hasMatch(lastChar)&&
+              RegExp(r'[\*/÷×%]').hasMatch(operator))) return;
+      if (lastChar == '.') {
+        _controller.text += '0';
+        return;
+      }
+      var text = _controller.text;
+      if (selection.start != selection.end) {
+        final temp = text.split('pattern');
+        temp.removeRange(selection.start, selection.end);
+        text = temp.join();
+      }
+
+      if (operaorReg.hasMatch(lastChar)) {
+        _controller.text =
+            text.substring(0, _controller.text.length - 1) + operator;
+        return;
+      }
+
+      _controller.text += operator;
       return;
+    } else {
+      if (selection.start == 0 &&
+          !RegExp(r'[+\-−]').hasMatch(_controller.text[0])) return;
+
+      final isNotSelected = selection.start == selection.end;
+      final previousChar = _controller.text[selection.start - 1];
+      final nextChar = isNotSelected
+          ? _controller.text[selection.start]
+          : _controller.text[selection.end];
+      // print('${previousChar}${nextChar}');
+
+      if (previousChar == '(') {
+        if (RegExp(r'[\*/÷×%)]').hasMatch(operator)) return;
+        print('(');
+        final text = _controller.text.split('');
+
+        if (!isNotSelected) text.removeRange(selection.start, selection.end);
+
+        text.insert(selection.start, operator);
+
+        _controller.value = _controller.value.copyWith(
+            text: text.join(),
+            selection: TextSelection(
+                baseOffset: selection.start + 1,
+                extentOffset: selection.start + 1));
+        return;
+      }
+      if (selection.start > 1 &&
+          (_controller.text[selection.start - 2] == '(' &&operaorReg.hasMatch(previousChar)&&
+              RegExp(r'[\*/÷×%]').hasMatch(operator))) return;
+
+      if ((RegExp(r'[0-9)]$').hasMatch(previousChar) &&
+              RegExp(r'[0-9(]$').hasMatch(nextChar)) ||
+          selection.start == 0 ||
+          (RegExp(r'[(]').hasMatch(previousChar))) {
+        final text = _controller.text.split('');
+        if (!isNotSelected) text.removeRange(selection.start, selection.end);
+
+        text.insert(selection.start, operator);
+
+        _controller.value = _controller.value.copyWith(
+            text: text.join(),
+            selection: TextSelection(
+                baseOffset: selection.start + 1,
+                extentOffset: selection.start + 1));
+        return;
+      }
+      if (operaorReg.hasMatch(previousChar) || operaorReg.hasMatch(nextChar)) {
+        final isPrevious = operaorReg.hasMatch(previousChar);
+        final text = _controller.text.split('');
+
+        text.removeAt(isPrevious ? selection.start - 1 : selection.start);
+        if (!isNotSelected) text.removeRange(selection.start, selection.end);
+
+        text.insert(
+            isPrevious ? selection.start - 1 : selection.start, operator);
+        _controller.value = _controller.value.copyWith(
+            text: text.join(),
+            selection: TextSelection(
+                baseOffset: selection.start, extentOffset: selection.start));
+        return;
+      }
     }
-    _controller.text += operator;
   }
 
   void _handleDecimal() {
@@ -108,10 +242,12 @@ class CalculateCubit extends Cubit<CalculateState> {
     if (currentText.isEmpty ||
         RegExp(r'[+\-−*/÷×%()]$').hasMatch(currentText)) {
       _controller.text += '0.';
+      return;
     } else {
       final lastNumber = currentText.split(RegExp(r'[-−+*/÷×()]')).last;
       if (!lastNumber.contains('.')) {
         _controller.text += '.';
+        return;
       }
     }
   }
@@ -126,6 +262,7 @@ class CalculateCubit extends Cubit<CalculateState> {
     if (openBracketCount > closeBracketCount &&
         !RegExp(r'[-−+*/÷×%(.]$').hasMatch(currentText)) {
       _controller.text += ')';
+      return;
     }
   }
 
