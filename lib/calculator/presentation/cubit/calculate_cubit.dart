@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:developer';
 
 import 'package:bloc/bloc.dart';
@@ -18,7 +19,7 @@ class CalculateCubit extends Cubit<CalculateState> {
   void onEvent(CalculatorEvent event, String input) {
     switch (event) {
       case CalculatorEvent.number:
-        _controller.text += input;
+        _handleNo(input);
         break;
       case CalculatorEvent.operator:
         _handleOperator(input);
@@ -151,7 +152,8 @@ class CalculateCubit extends Cubit<CalculateState> {
       if ((lastChar == '(' && !RegExp(r'[+\-−]').hasMatch(operator))) return;
 
       if (_controller.text.length > 1 &&
-          (_controller.text[_controller.text.length - 2] == '(' &&operaorReg.hasMatch(lastChar)&&
+          (_controller.text[_controller.text.length - 2] == '(' &&
+              operaorReg.hasMatch(lastChar) &&
               RegExp(r'[\*/÷×%]').hasMatch(operator))) return;
       if (lastChar == '.') {
         _controller.text += '0';
@@ -200,7 +202,8 @@ class CalculateCubit extends Cubit<CalculateState> {
         return;
       }
       if (selection.start > 1 &&
-          (_controller.text[selection.start - 2] == '(' &&operaorReg.hasMatch(previousChar)&&
+          (_controller.text[selection.start - 2] == '(' &&
+              operaorReg.hasMatch(previousChar) &&
               RegExp(r'[\*/÷×%]').hasMatch(operator))) return;
 
       if ((RegExp(r'[0-9)]$').hasMatch(previousChar) &&
@@ -238,31 +241,74 @@ class CalculateCubit extends Cubit<CalculateState> {
   }
 
   void _handleDecimal() {
-    String currentText = _controller.text;
-    if (currentText.isEmpty ||
-        RegExp(r'[+\-−*/÷×%()]$').hasMatch(currentText)) {
-      _controller.text += '0.';
-      return;
-    } else {
-      final lastNumber = currentText.split(RegExp(r'[-−+*/÷×()]')).last;
-      if (!lastNumber.contains('.')) {
-        _controller.text += '.';
+    if (!_controller.selection.isValid ||
+        _controller.selection.start == _controller.text.length) {
+      String currentText = _controller.text;
+      if (currentText.isEmpty ||
+          RegExp(r'[+\-−*/÷×%()]$').hasMatch(currentText)) {
+        _controller.text += '0.';
         return;
+      } else {
+        final lastNumber = currentText.split(RegExp(r'[-−+*/÷×()]')).last;
+        if (!lastNumber.contains('.')) {
+          _controller.text += '.';
+          return;
+        }
+      }
+    } else {
+      final selection = _controller.selection;
+      final previousNum = _controller.text
+          .substring(0, selection.start)
+          .split(RegExp(r'[\-−+*/÷×()]'))
+          .last;
+      final nextNum = _controller.text
+          .substring(selection.end, _controller.text.length)
+          .split(RegExp(r'[\-−+*/÷×()]'))
+          .first;
+
+      if (!previousNum.contains(RegExp(r'[.]')) &&
+          !nextNum.contains(RegExp(r'[.]'))) {
+        final text = _controller.text.split('');
+        text.removeRange(selection.start, selection.end);
+        text.insert(selection.start, previousNum.isEmpty ? '0.' : '.');
+        _controller.value = _controller.value.copyWith(
+            text: text.join(),
+            selection: TextSelection(
+                baseOffset: previousNum.isEmpty
+                    ? selection.start + 2
+                    : selection.start + 1,
+                extentOffset: previousNum.isEmpty
+                    ? selection.start + 2
+                    : selection.start + 1));
       }
     }
   }
 
   void _handleCloseParenthesis() {
-    String currentText = _controller.text;
+    final currentText = _controller.text;
+    final selection = _controller.selection;
+
+    var textBeforeSelection = selection.isValid
+        ? currentText.substring(0, selection.start)
+        : currentText;
+
     final openBracketCount =
-        currentText.split('').where((char) => char == '(').length;
+        textBeforeSelection.split('').where((char) => char == '(').length;
     final closeBracketCount =
-        currentText.split('').where((char) => char == ')').length;
+        textBeforeSelection.split('').where((char) => char == ')').length;
 
     if (openBracketCount > closeBracketCount &&
-        !RegExp(r'[-−+*/÷×%(.]$').hasMatch(currentText)) {
-      _controller.text += ')';
-      return;
+        !RegExp(r'[-−+*/÷×%(.]$').hasMatch(textBeforeSelection)) {
+      final text = currentText.split('');
+      if (selection.isValid) text.removeRange(selection.start, selection.end);
+
+      selection.isValid ? text.insert(selection.start, ')') : text.add(')');
+
+      _controller.value = _controller.value.copyWith(
+          text: text.join(),
+          selection: TextSelection(
+              baseOffset: selection.start + 1,
+              extentOffset: selection.start + 1));
     }
   }
 
@@ -281,5 +327,22 @@ class CalculateCubit extends Cubit<CalculateState> {
       _controller.text += '0×(';
       return;
     }
+  }
+
+  void _handleNo(String input) {
+    final selection = _controller.selection;
+
+    if (!selection.isValid || selection.start == _controller.text.length) {
+      _controller.text += input;
+      return;
+    }
+    final text = _controller.text.split('');
+    text.removeRange(selection.start, selection.end);
+    text.insert(selection.start, input);
+    _controller.value = _controller.value.copyWith(
+        text: text.join(),
+        selection: TextSelection(
+            baseOffset: selection.start + 1,
+            extentOffset: selection.start + 1));
   }
 }
